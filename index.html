@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mis carreras</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root{--bg:#0e0e0e;--card:#181818;--line:#2a2a2a;--red:#e10600;--beige:#efe9d8;--mut:#8a8a8a}
+*{box-sizing:border-box}html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--beige);font:14px system-ui,sans-serif;display:grid;grid-template-columns:360px 1fr}
+aside{padding:16px;overflow:auto;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:12px}
+h1{margin:0;font-size:22px;letter-spacing:1px}h1 b{background:var(--red);padding:0 6px}
+h3{margin:0 0 6px;font-size:12px;letter-spacing:1px;color:var(--mut)}
+#map{height:100%;background:#111}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px}
+.pb{display:flex;justify-content:space-between;padding:4px 0;font-family:ui-monospace,monospace}
+.pb span:last-child{background:var(--beige);color:#000;padding:0 8px;border-radius:4px;min-width:80px;text-align:center}
+button,input,textarea,select{font:inherit;color:inherit;background:#101010;border:1px solid var(--line);border-radius:8px;padding:8px}
+button{cursor:pointer;background:var(--red);border:0;font-weight:700;color:#fff}
+button.g{background:#222;font-weight:400}
+.race{padding:10px;border:1px solid var(--line);border-radius:10px;cursor:pointer;display:flex;justify-content:space-between;gap:8px}
+.race:hover,.race.on{border-color:var(--red)}.race small{color:var(--mut);display:block}
+.t{font-family:ui-monospace,monospace;color:var(--red);font-weight:700}
+.pin{width:18px;height:18px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#ff6a5f,#e10600 60%,#800);border:2px solid #fff;box-shadow:0 2px 6px #000}
+#detail{position:absolute;right:12px;bottom:12px;z-index:900;width:340px;max-height:70vh;overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+#detail h2{margin:0 0 2px}.kv{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}
+.kv div{background:#101010;border-radius:8px;padding:8px}.kv small{display:block;color:var(--mut);font-size:11px}
+.sp{display:flex;align-items:center;gap:6px;font:12px ui-monospace,monospace;margin:2px 0}
+.sp i{display:block;height:8px;background:var(--red);border-radius:4px}
+dialog{background:var(--card);color:var(--beige);border:1px solid var(--line);border-radius:12px;width:min(440px,94vw)}
+dialog::backdrop{background:#000a}form{display:grid;gap:8px}.row{display:flex;gap:6px}.row>*{flex:1;min-width:0}
+@media(max-width:800px){body{grid-template-columns:1fr;grid-template-rows:45vh 1fr}#map{order:-1}aside{border:0}#detail{width:auto;left:12px}}
+</style></head><body>
+<aside>
+ <h1>MIS <b>CARRERAS</b></h1>
+ <div class="card"><h3>MIS MEJORES MARCAS</h3><div id="pbs"></div></div>
+ <button id="add">+ Añadir carrera</button>
+ <div id="stats" style="color:var(--mut)"></div>
+ <div id="list" style="display:grid;gap:8px"></div>
+ <div class="row" style="margin-top:auto">
+  <button class="g" id="exp">Exportar</button><button class="g" id="imp">Importar</button>
+  <button class="g" id="out" hidden>Salir</button><input type="file" id="impf" accept=".json" hidden>
+ </div>
+ <small style="color:var(--mut)" id="mode"></small>
+</aside>
+<div id="map"></div>
+<section id="detail" hidden></section>
+
+<dialog id="dlg"><form id="f">
+ <h3>NUEVA CARRERA</h3>
+ <label>Archivo GPX (opcional, rellena casi todo solo)<input type="file" id="gpx" accept=".gpx"></label>
+ <input id="name" placeholder="Nombre (Maratón de Valencia)" required>
+ <div class="row"><input type="date" id="date" required><input type="number" id="dist" step="0.01" placeholder="Distancia km" required></div>
+ <div class="row"><input type="number" id="h" min="0" placeholder="h"><input type="number" id="m" min="0" max="59" placeholder="min" required><input type="number" id="s" min="0" max="59" placeholder="seg" required></div>
+ <div class="row"><input id="place" placeholder="Ciudad / lugar"><button type="button" class="g" id="geo" style="flex:0 0 auto">Buscar</button></div>
+ <div class="row"><button type="button" class="g" id="pick">📍 Elegir en el mapa</button><span id="ll" style="align-self:center;color:var(--mut)">sin ubicación</span></div>
+ <div class="row"><input type="number" id="pos" min="1" placeholder="Posición"><input id="bib" placeholder="Dorsal"></div>
+ <textarea id="notes" rows="3" placeholder="Notas, sensaciones, clima..."></textarea>
+ <div class="row"><button type="button" class="g" id="cancel">Cancelar</button><button>Guardar</button></div>
+</form></dialog>
+
+<dialog id="auth"><form id="af"><h3>ENTRAR</h3>
+ <input type="email" id="em" placeholder="email" required><input type="password" id="pw" placeholder="contraseña (mín. 6)" required>
+ <div class="row"><button type="button" class="g" id="su">Crear cuenta</button><button>Entrar</button></div><small id="ae" style="color:#f66"></small></form></dialog>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+// ====== CONFIGURACIÓN (opcional) ======
+// Déjalo vacío y funciona en modo local (datos en tu navegador).
+// Rellénalo con tu proyecto de Supabase para tener base de datos en la nube y cuentas.
+const SUPABASE_URL = "https://hjxavuicvnmggczazsbo.supabase.co";
+const SUPABASE_KEY = "sb_publishable_yQqKHm-DIfy2D1l41h7h5A_n7G2f62K";
+// ======================================
+const $=id=>document.getElementById(id), esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const sb=SUPABASE_URL&&SUPABASE_KEY&&window.supabase?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
+let R=[],markers={},route=null,draft={},picking=false,sel=null;
+const fmt=s=>{s=Math.round(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60,p=n=>String(n).padStart(2,'0');return h?`${h}:${p(m)}:${p(x)}`:`${m}:${p(x)}`};
+const pace=(s,k)=>fmt(s/k)+' /km';
+const map=L.map('map',{zoomControl:true}).setView([40.2,-3.7],6);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{attribution:'© OpenStreetMap © CARTO',maxZoom:19}).addTo(map);
+
+// ---------- almacenamiento ----------
+const store={
+ async load(){if(sb){const{data,error}=await sb.from('races').select('id,data');if(error)throw error;return data.map(r=>({...r.data,id:r.id}))}
+  return JSON.parse(localStorage.getItem('races')||'[]')},
+ async add(r){if(sb){const{data,error}=await sb.from('races').insert({data:r}).select('id').single();if(error)throw error;r.id=data.id}
+  else{r.id=crypto.randomUUID()}R.push(r);this.save()},
+ async del(id){if(sb){const{error}=await sb.from('races').delete().eq('id',id);if(error)throw error}R=R.filter(r=>r.id!==id);this.save()},
+ save(){if(!sb)localStorage.setItem('races',JSON.stringify(R))}
+};
+
+// ---------- GPX ----------
+const hav=(a,b)=>{const r=Math.PI/180,dl=(b.la-a.la)*r,dn=(b.lo-a.lo)*r,x=Math.sin(dl/2)**2+Math.cos(a.la*r)*Math.cos(b.la*r)*Math.sin(dn/2)**2;return 12742000*Math.asin(Math.sqrt(x))};
+function parseGPX(txt){
+ const x=new DOMParser().parseFromString(txt,'text/xml');
+ const P=[...x.querySelectorAll('trkpt')].map(p=>({la:+p.getAttribute('lat'),lo:+p.getAttribute('lon'),
+  e:p.querySelector('ele')?+p.querySelector('ele').textContent:NaN,t:p.querySelector('time')?Date.parse(p.querySelector('time').textContent):NaN}));
+ if(P.length<2)throw new Error('El GPX no tiene puntos de recorrido');
+ let d=0,gain=0;const cum=[0];
+ for(let i=1;i<P.length;i++){d+=hav(P[i-1],P[i]);cum.push(d)}
+ const E=P.map((_,i)=>{const a=P.slice(Math.max(0,i-2),i+3).map(q=>q.e).filter(v=>!isNaN(v));return a.length?a.reduce((s,v)=>s+v)/a.length:NaN});
+ for(let i=1;i<E.length;i++)if(E[i]>E[i-1])gain+=E[i]-E[i-1];
+ const splits=[],T=!isNaN(P[0].t);
+ if(T){let k=1,pt=P[0].t;for(let i=1;i<P.length;i++){while(cum[i]>=k*1000&&cum[i-1]<k*1000){const f=(k*1000-cum[i-1])/(cum[i]-cum[i-1]);const t=P[i-1].t+f*(P[i].t-P[i-1].t);splits.push((t-pt)/1000);pt=t;k++}}}
+ const st=Math.ceil(P.length/500);
+ return{track:P.filter((_,i)=>i%st==0||i==P.length-1).map(p=>[+p.la.toFixed(5),+p.lo.toFixed(5),isNaN(p.e)?0:Math.round(p.e)]),
+  gain:Math.round(gain),km:d/1000,secs:T?(P.at(-1).t-P[0].t)/1000:null,date:T?new Date(P[0].t).toISOString().slice(0,10):null,lat:P[0].la,lng:P[0].lo,splits}
+}
+
+// ---------- render ----------
+const BUCKETS=[['5K',4.8,5.4],['10K',9.8,10.5],['15K',14.7,15.5],['21K',20.8,21.6],['Maratón',41.8,43]];
+function render(){
+ R.sort((a,b)=>b.date.localeCompare(a.date));
+ $('pbs').innerHTML=BUCKETS.map(([n,lo,hi])=>{const c=R.filter(r=>r.dist>=lo&&r.dist<=hi);const b=c.length?Math.min(...c.map(r=>r.secs)):null;return`<div class="pb"><span>${n}</span><span>${b?fmt(b):'—'}</span></div>`}).join('');
+ const km=R.reduce((s,r)=>s+r.dist,0);
+ $('stats').textContent=`${R.length} carreras · ${km.toFixed(1)} km en total`;
+ $('list').innerHTML=R.map(r=>`<div class="race ${r.id===sel?'on':''}" data-id="${r.id}"><div><b>${esc(r.name)}</b><small>${r.date} · ${esc(r.place||'')}</small></div><div style="text-align:right"><span class="t">${fmt(r.secs)}</span><small>${r.dist} km</small></div></div>`).join('')||'<small style="color:var(--mut)">Aún no hay carreras. ¡Añade la primera!</small>';
+ Object.values(markers).forEach(m=>m.remove());markers={};
+ R.filter(r=>r.lat!=null).forEach(r=>{markers[r.id]=L.marker([r.lat,r.lng],{icon:L.divIcon({className:'',html:'<div class="pin"></div>',iconSize:[18,18],iconAnchor:[9,9]})}).addTo(map).bindTooltip(`${esc(r.name)} · ${fmt(r.secs)}`).on('click',()=>show(r.id))});
+}
+function show(id){
+ const r=R.find(x=>x.id===id);if(!r)return;sel=id;render();
+ if(route){route.remove();route=null}
+ if(r.track?.length){route=L.polyline(r.track.map(p=>[p[0],p[1]]),{color:'#e10600',weight:4}).addTo(map);map.fitBounds(route.getBounds(),{padding:[60,60]})}
+ else if(r.lat!=null)map.flyTo([r.lat,r.lng],10);
+ let elev='',spl='';
+ if(r.track?.length>1&&r.track.some(p=>p[2])){const e=r.track.map(p=>p[2]),mn=Math.min(...e),mx=Math.max(...e),w=300,h=70;
+  const pts=e.map((v,i)=>`${i/(e.length-1)*w},${h-(v-mn)/(mx-mn||1)*(h-6)-3}`).join(' ');
+  elev=`<h3>DESNIVEL (${mn}–${mx} m)</h3><svg viewBox="0 0 ${w} ${h}" width="100%"><polygon points="0,${h} ${pts} ${w},${h}" fill="#e1060055" stroke="#e10600"/></svg>`}
+ if(r.splits?.length){const mx=Math.max(...r.splits),mn=Math.min(...r.splits);
+  spl='<h3>RITMO POR KM</h3>'+r.splits.map((s,i)=>`<div class="sp"><span style="width:44px">km ${i+1}</span><i style="width:${40+60*(1-(s-mn)/(mx-mn||1))*.8}%"></i><span>${fmt(s)}</span></div>`).join('')}
+ $('detail').hidden=false;
+ $('detail').innerHTML=`<div class="row" style="align-items:start"><div><h2>${esc(r.name)}</h2><small style="color:var(--mut)">${r.date} · ${esc(r.place||'')}</small></div><button class="g" style="flex:0 0 auto" id="x">✕</button></div>
+ <div class="kv"><div><small>TIEMPO</small><b class="t" style="font-size:20px">${fmt(r.secs)}</b></div><div><small>RITMO MEDIO</small>${pace(r.secs,r.dist)}</div>
+ <div><small>DISTANCIA</small>${r.dist} km</div><div><small>DESNIVEL +</small>${r.gain!=null?r.gain+' m':'—'}</div>
+ ${r.pos?`<div><small>POSICIÓN</small>${r.pos}º</div>`:''}${r.bib?`<div><small>DORSAL</small>${esc(r.bib)}</div>`:''}</div>
+ ${r.notes?`<p>${esc(r.notes)}</p>`:''}${elev}${spl}<button class="g" id="del" style="margin-top:10px;width:100%">Eliminar carrera</button>`;
+ $('x').onclick=()=>{$('detail').hidden=true;sel=null;if(route){route.remove();route=null}render()};
+ $('del').onclick=async()=>{if(confirm('¿Eliminar esta carrera?')){try{await store.del(id)}catch(e){return alert(e.message)}$('x').click()}};
+}
+
+// ---------- eventos ----------
+$('list').onclick=e=>{const c=e.target.closest('.race');if(c)show(c.dataset.id)};
+const setLL=(la,lo)=>{draft.lat=la;draft.lng=lo;$('ll').textContent=`📍 ${la.toFixed(3)}, ${lo.toFixed(3)}`};
+$('add').onclick=()=>{$('f').reset();draft={};$('ll').textContent='sin ubicación';$('dlg').showModal()};
+$('cancel').onclick=()=>$('dlg').close();
+$('pick').onclick=()=>{$('dlg').close();picking=true;map.getContainer().style.cursor='crosshair'};
+map.on('click',e=>{if(!picking)return;picking=false;map.getContainer().style.cursor='';setLL(e.latlng.lat,e.latlng.lng);$('dlg').showModal()});
+$('geo').onclick=async()=>{const q=$('place').value;if(!q)return;try{const j=await(await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(q))).json();
+ if(j[0]){setLL(+j[0].lat,+j[0].lon)}else alert('No encontrado')}catch{alert('Error buscando el lugar')}};
+$('gpx').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const g=parseGPX(await f.text());
+ Object.assign(draft,{track:g.track,gain:g.gain,splits:g.splits});setLL(g.lat,g.lng);
+ $('dist').value=g.km.toFixed(2);if(g.date)$('date').value=g.date;
+ if(g.secs){$('h').value=Math.floor(g.secs/3600);$('m').value=Math.floor(g.secs%3600/60);$('s').value=Math.round(g.secs%60)}
+ if(!$('name').value)$('name').value=f.name.replace(/\.gpx$/i,'')}catch(err){alert(err.message)}};
+$('f').onsubmit=async e=>{e.preventDefault();
+ const r={name:$('name').value,date:$('date').value,dist:+$('dist').value,secs:(+$('h').value||0)*3600+(+$('m').value)*60+(+$('s').value),
+  place:$('place').value,pos:+$('pos').value||null,bib:$('bib').value,notes:$('notes').value,...draft};
+ try{await store.add(r)}catch(err){return alert(err.message)}$('dlg').close();render();show(r.id)};
+$('exp').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(R,null,1)],{type:'application/json'}));a.download='mis-carreras.json';a.click()};
+$('imp').onclick=()=>$('impf').click();
+$('impf').onchange=async e=>{try{for(const r of JSON.parse(await e.target.files[0].text())){delete r.id;await store.add(r)}render()}catch(err){alert('Archivo no válido')}};
+
+// ---------- arranque ----------
+async function start(){try{R=await store.load()}catch(e){alert(e.message)}render()}
+(async()=>{
+ $('mode').textContent=sb?'☁️ Sincronizado con Supabase':'💾 Modo local: datos solo en este navegador';
+ if(!sb)return start();
+ $('out').hidden=false;$('out').onclick=async()=>{await sb.auth.signOut();location.reload()};
+ const{data}=await sb.auth.getSession();
+ if(data.session)return start();
+ $('auth').showModal();
+ const go=async up=>{const c={email:$('em').value,password:$('pw').value};
+  const{error}=up?await sb.auth.signUp(c):await sb.auth.signInWithPassword(c);
+  if(error)return $('ae').textContent=error.message;
+  const s=(await sb.auth.getSession()).data.session;
+  if(!s)return $('ae').textContent='Revisa tu email para confirmar la cuenta y vuelve a entrar.';
+  $('auth').close();start()};
+ $('af').onsubmit=e=>{e.preventDefault();go(false)};$('su').onclick=()=>go(true);
+})();
+</script></body></html>
