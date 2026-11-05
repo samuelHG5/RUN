@@ -11,6 +11,7 @@ aside{padding:16px;overflow:auto;border-right:1px solid var(--line);display:flex
 h1{margin:0;font-size:22px;letter-spacing:1px}h1 b{background:var(--red);padding:0 6px}
 h3{margin:0 0 6px;font-size:12px;letter-spacing:1px;color:var(--mut)}
 #map{height:100%;background:#111}
+.dark-tiles{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9) saturate(.6)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px}
 .pb{display:flex;justify-content:space-between;padding:4px 0;font-family:ui-monospace,monospace}
 .pb span:last-child{background:var(--beige);color:#000;padding:0 8px;border-radius:4px;min-width:80px;text-align:center}
@@ -77,7 +78,7 @@ let R=[],markers={},route=null,draft={},picking=false,sel=null;
 const fmt=s=>{s=Math.round(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60,p=n=>String(n).padStart(2,'0');return h?`${h}:${p(m)}:${p(x)}`:`${m}:${p(x)}`};
 const pace=(s,k)=>fmt(s/k)+' /km';
 const map=L.map('map',{zoomControl:true}).setView([40.2,-3.7],6);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{attribution:'© OpenStreetMap © CARTO',maxZoom:19}).addTo(map);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap',maxZoom:19,className:'dark-tiles'}).addTo(map);
 
 // ---------- almacenamiento ----------
 const store={
