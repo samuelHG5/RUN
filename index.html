@@ -28,6 +28,9 @@ button.g{background:#222;font-weight:400}
 .sp i{display:block;height:8px;background:var(--red);border-radius:4px}
 dialog{background:var(--card);color:var(--beige);border:1px solid var(--line);border-radius:12px;width:min(440px,94vw)}
 dialog::backdrop{background:#000a}form{display:grid;gap:8px}.row{display:flex;gap:6px}.row>*{flex:1;min-width:0}
+#sug{max-height:210px;overflow:auto;border:1px solid var(--line);border-radius:8px;background:#101010}
+#sug .sh{padding:6px 8px;font-size:11px;color:var(--mut);position:sticky;top:0;background:#101010;border-bottom:1px solid var(--line)}
+#sug .opt{padding:7px 8px;cursor:pointer;border-bottom:1px solid #1d1d1d}#sug .opt:hover{background:#1c1c1c}#sug .opt small{display:block;color:var(--mut)}
 @media(max-width:800px){body{grid-template-columns:1fr;grid-template-rows:45vh 1fr}#map{order:-1}aside{border:0}#detail{width:auto;left:12px}}
 </style></head><body>
 <aside>
@@ -52,7 +55,7 @@ dialog::backdrop{background:#000a}form{display:grid;gap:8px}.row{display:flex;ga
  <div class="row"><input type="date" id="date" required><input type="number" id="dist" step="0.01" placeholder="Distancia km" required></div>
  <div class="row"><input type="number" id="h" min="0" placeholder="h"><input type="number" id="m" min="0" max="59" placeholder="min" required><input type="number" id="s" min="0" max="59" placeholder="seg" required></div>
  <div class="row"><input id="place" placeholder="Ciudad / lugar"><button type="button" class="g" id="geo" style="flex:0 0 auto">Buscar</button></div>
- <select id="sug" hidden></select><small id="sugmsg" style="color:var(--mut)"></small>
+ <small id="sugmsg" style="color:var(--mut)"></small><div id="sug" hidden></div>
  <div class="row"><button type="button" class="g" id="pick">📍 Elegir en el mapa</button><span id="ll" style="align-self:center;color:var(--mut)">sin ubicación</span></div>
  <div class="row"><input type="number" id="pos" min="1" placeholder="Posición"><input id="bib" placeholder="Dorsal"></div>
  <textarea id="notes" rows="3" placeholder="Notas, sensaciones, clima..."></textarea>
@@ -74,7 +77,7 @@ const SUPABASE_KEY = "sb_publishable_yQqKHm-DIfy2D1l41h7h5A_n7G2f62K";
 // ======================================
 const $=id=>document.getElementById(id), esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const sb=SUPABASE_URL&&SUPABASE_KEY&&window.supabase?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
-let R=[],markers={},route=null,draft={},picking=false,sel=null;
+let R=[],markers={},route=null,draft={},picking=false,sel=null,SUG=[],ctx=null,reqId=0,lastQ='';
 const fmt=s=>{s=Math.round(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60,p=n=>String(n).padStart(2,'0');return h?`${h}:${p(m)}:${p(x)}`:`${m}:${p(x)}`};
 const pace=(s,k)=>fmt(s/k)+' /km';
 const map=L.map('map',{zoomControl:true}).setView([40.2,-3.7],6);
@@ -147,31 +150,104 @@ function show(id){
 // ---------- eventos ----------
 $('list').onclick=e=>{const c=e.target.closest('.race');if(c)show(c.dataset.id)};
 const setLL=(la,lo)=>{draft.lat=la;draft.lng=lo;$('ll').textContent=`📍 ${la.toFixed(3)}, ${lo.toFixed(3)}`};
-$('add').onclick=()=>{$('f').reset();draft={};$('sug').hidden=true;$('sugmsg').textContent='';$('ll').textContent='sin ubicación';$('dlg').showModal()};
-async function suggest(){
- const S=$('sug'),M=$('sugmsg');S.hidden=true;M.textContent='';
- if(!sb||draft.lat==null)return;
- const dv=$('date').value,base=dv?new Date(dv):new Date(),w=(dv?15:30)*864e5,iso=t=>new Date(t).toISOString().slice(0,10);
- const{data,error}=await sb.from('catalog').select('*').gte('date',iso(+base-w)).lte('date',iso(+base+w));
- if(error)return;
- const c=(data||[]).filter(x=>hav({la:x.lat,lo:x.lng},{la:draft.lat,lo:draft.lng})<30000).sort((a,b)=>Math.abs(new Date(a.date)-base)-Math.abs(new Date(b.date)-base));
- if(!c.length){M.textContent='No hay carreras en el catálogo cerca de ese lugar y fecha. Rellénala a mano y quedará guardada para la próxima vez.';return}
- S.innerHTML='<option value="">🔎 Carreras encontradas ('+c.length+')…</option>'+c.map((x,i)=>`<option value="${i}">${esc(x.name)} · ${x.dist} km · ${x.date}</option>`).join('');
- S._c=c;S.hidden=false;
+$('add').onclick=()=>{$('f').reset();draft={};SUG=[];ctx=null;lastQ='';reqId++;$('sug').hidden=true;$('sugmsg').textContent='';$('ll').textContent='sin ubicación';$('dlg').showModal()};
+// ---------- carreras oficiales de la ciudad (último año) ----------
+// Fuentes: tu catálogo de Supabase (carreras ya añadidas por usuarios) + Wikidata (carreras notables de la ciudad).
+const iso=t=>new Date(t).toISOString().slice(0,10);
+const norm=s=>s.toLowerCase().replace(/\b(19|20)\d{2}\b/g,'').replace(/[^a-z0-9áéíóúüñç]+/g,' ').trim();
+const guessDist=n=>{n=n.toLowerCase();if(/media marat|half|semimarat|21 ?k/.test(n))return 21.1;if(/marat|marath/.test(n))return 42.2;
+ const m=n.match(/(\d{1,2}(?:[.,]\d)?) ?k(?:m)?\b/);return m?+m[1].replace(',','.'):null};
+const WD_INC='marat|marath|half|10 ?k|5 ?k|21 ?k|carrera|cursa|korrika|running|trail|silvestre|race|10 ?km',
+ WD_EXC='motor|f[oó]rmula|formula|cicli|cycl|moto|grand prix|gran premio|rally|caballo|horse|regata|triat|triath|nataci|swim|ironman';
+async function fromCatalog(since,today){
+ if(!sb)return[];
+ const{data,error}=await sb.from('catalog').select('*').gte('date',since).lte('date',today)
+  .gte('lat',ctx.la-.25).lte('lat',ctx.la+.25).gte('lng',ctx.lo-.35).lte('lng',ctx.lo+.35);
+ if(error)throw error;
+ return(data||[]).filter(x=>x.lat!=null&&hav({la:x.lat,lo:x.lng},{la:ctx.la,lo:ctx.lo})<25000)
+  .map(x=>({name:x.name,date:x.date,dist:x.dist,city:x.city,lat:x.lat,lng:x.lng,src:'Tu catálogo'}));
 }
-$('sug').onchange=e=>{const x=e.target._c?.[e.target.value];if(!x)return;$('name').value=x.name;$('date').value=x.date;$('dist').value=x.dist;$('place').value=x.city||'';setLL(x.lat,x.lng)};
-$('date').onchange=suggest;
+async function fromWikidata(since,today){
+ if(!/^Q\d+$/.test(ctx.qid||''))return[];
+ const q=`SELECT DISTINCT ?e ?eLabel ?d ?len ?co WHERE {
+  ?loc wdt:P131* wd:${ctx.qid} .
+  { ?e wdt:P276 ?loc } UNION { ?e wdt:P131 ?loc }
+  ?e rdfs:label ?l . FILTER(LANG(?l) IN ("es","en","ca"))
+  FILTER(REGEX(?l,"${WD_INC}","i") && !REGEX(?l,"${WD_EXC}","i"))
+  OPTIONAL{?e wdt:P585 ?d1} OPTIONAL{?e wdt:P580 ?d2} BIND(COALESCE(?d1,?d2) AS ?d)
+  OPTIONAL{?e p:P2043/psn:P2043/wikibase:quantityAmount ?len}
+  OPTIONAL{?e wdt:P625 ?co}
+  SERVICE wikibase:label{bd:serviceParam wikibase:language "es,ca,en".}
+ } LIMIT 400`;
+ const ac=new AbortController(),to=setTimeout(()=>ac.abort(),30000);
+ try{
+  const r=await fetch('https://query.wikidata.org/sparql?format=json&query='+encodeURIComponent(q),{signal:ac.signal});
+  if(!r.ok)throw new Error('Wikidata '+r.status);
+  const seen=new Set(),out=[];
+  for(const b of(await r.json()).results.bindings){
+   const id=b.e.value.split('/').pop(),name=b.eLabel?.value;
+   if(!name||/^Q\d+$/.test(name)||seen.has(id))continue;seen.add(id);
+   const d=b.d?.value.slice(0,10)||null;if(d&&(d<since||d>today))continue;
+   const m=b.co?.value.match(/\(([-\d.]+) ([-\d.]+)\)/),len=b.len?+(b.len.value/1000).toFixed(2):null;
+   out.push({name,date:d,dist:len||guessDist(name),city:ctx.name,lat:m?+m[2]:null,lng:m?+m[1]:null,src:'Wikidata'});
+  }
+  return out;
+ }finally{clearTimeout(to)}
+}
+async function loadRaces(){
+ const id=++reqId,M=$('sugmsg');SUG=[];$('sug').hidden=true;
+ if(!ctx)return;
+ M.textContent='Buscando carreras oficiales de '+ctx.name+'…';
+ const today=iso(Date.now()),since=iso(Date.now()-365*864e5);
+ const[c,w]=await Promise.allSettled([fromCatalog(since,today),fromWikidata(since,today)]);
+ if(id!==reqId)return;
+ let all=[...(c.value||[]),...(w.value||[])];
+ const dated=new Set(all.filter(x=>x.date).map(x=>norm(x.name))),seen=new Set();
+ all=all.filter(x=>{const k=norm(x.name)+'|'+(x.date||'');if(seen.has(k))return false;seen.add(k);return x.date||!dated.has(norm(x.name))});
+ SUG=all;
+ const fail=[c.status==='rejected'&&'tu catálogo',w.status==='rejected'&&'Wikidata'].filter(Boolean);
+ M.textContent=all.length?'':'No he encontrado carreras oficiales de '+ctx.name+' en el último año. Rellénala a mano y quedará guardada para la próxima vez.';
+ if(fail.length)M.textContent+=(M.textContent?' ':'')+'(No se pudo consultar '+fail.join(' ni ')+'.)';
+ renderSug();
+}
+function renderSug(){
+ const S=$('sug');if(!SUG.length||!ctx){S.hidden=true;return}
+ const dv=$('date').value,base=dv?+new Date(dv):null;
+ const L2=[...SUG].sort((a,b)=>{
+  if(base&&a.date&&b.date)return Math.abs(new Date(a.date)-base)-Math.abs(new Date(b.date)-base);
+  if(!a.date!==!b.date)return a.date?-1:1;
+  return(b.date||'').localeCompare(a.date||'')||a.name.localeCompare(b.name)});
+ S.innerHTML=`<div class="sh">🔎 Carreras oficiales del último año en ${esc(ctx.name)} (${L2.length})</div>`+
+  L2.map(x=>`<div class="opt" data-i="${SUG.indexOf(x)}"><b>${esc(x.name)}</b><small>${esc([x.date||'fecha no disponible',x.dist?x.dist+' km':'',x.src].filter(Boolean).join(' · '))}</small></div>`).join('');
+ S.hidden=false;
+}
+async function locate(la,lo){
+ try{const j=await(await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&zoom=10&extratags=1&accept-language=es&lat=${la}&lon=${lo}`)).json();
+  ctx={name:j.name||j.address?.city||j.address?.town||j.address?.village||'esta zona',la,lo,qid:j.extratags?.wikidata}}
+ catch{ctx={name:'esta zona',la,lo}}
+ if(!$('place').value&&ctx.name!=='esta zona'){$('place').value=ctx.name;lastQ=ctx.name}
+ loadRaces();
+}
+$('sug').onclick=e=>{const o=e.target.closest('.opt'),x=o&&SUG[+o.dataset.i];if(!x)return;
+ $('name').value=x.name;if(x.date)$('date').value=x.date;if(x.dist)$('dist').value=x.dist;
+ if(!$('place').value)$('place').value=x.city||ctx?.name||'';if(x.lat!=null)setLL(x.lat,x.lng)};
+$('date').onchange=renderSug;
 $('place').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();$('geo').click()}};
 $('cancel').onclick=()=>$('dlg').close();
 $('pick').onclick=()=>{$('dlg').close();picking=true;map.getContainer().style.cursor='crosshair'};
-map.on('click',e=>{if(!picking)return;picking=false;map.getContainer().style.cursor='';setLL(e.latlng.lat,e.latlng.lng);$('dlg').showModal();suggest()});
-$('geo').onclick=async()=>{const q=$('place').value;if(!q)return;try{const j=await(await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(q))).json();
- if(j[0]){setLL(+j[0].lat,+j[0].lon);suggest()}else alert('No encontrado')}catch{alert('Error buscando el lugar')}};
+map.on('click',e=>{if(!picking)return;picking=false;map.getContainer().style.cursor='';setLL(e.latlng.lat,e.latlng.lng);$('dlg').showModal();locate(e.latlng.lat,e.latlng.lng)});
+$('geo').onclick=async()=>{const q=$('place').value.trim();if(!q)return;lastQ=q;
+ try{const j=await(await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=5&extratags=1&accept-language=es&q='+encodeURIComponent(q))).json();
+  const p=j.find(x=>x.extratags?.wikidata&&(x.class==='place'||x.class==='boundary'))||j[0];
+  if(!p)return alert('No encontrado');
+  const la=+p.lat,lo=+p.lon;setLL(la,lo);ctx={name:p.name||q,la,lo,qid:p.extratags?.wikidata};loadRaces()}
+ catch{alert('Error buscando el lugar')}};
+$('place').onchange=()=>{const q=$('place').value.trim();if(q&&q!==lastQ)$('geo').click()};
 $('gpx').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const g=parseGPX(await f.text());
  Object.assign(draft,{track:g.track,gain:g.gain,splits:g.splits});setLL(g.lat,g.lng);
  $('dist').value=g.km.toFixed(2);if(g.date)$('date').value=g.date;
  if(g.secs){$('h').value=Math.floor(g.secs/3600);$('m').value=Math.floor(g.secs%3600/60);$('s').value=Math.round(g.secs%60)}
- if(!$('name').value)$('name').value=f.name.replace(/\.gpx$/i,'');suggest()}catch(err){alert(err.message)}};
+ if(!$('name').value)$('name').value=f.name.replace(/\.gpx$/i,'');locate(g.lat,g.lng)}catch(err){alert(err.message)}};
 $('f').onsubmit=async e=>{e.preventDefault();
  const r={name:$('name').value,date:$('date').value,dist:+$('dist').value,secs:(+$('h').value||0)*3600+(+$('m').value)*60+(+$('s').value),
   place:$('place').value,pos:+$('pos').value||null,bib:$('bib').value,notes:$('notes').value,...draft};
