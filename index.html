@@ -58,6 +58,7 @@ dialog::backdrop{background:#000a}form{display:grid;gap:8px}.row{display:flex;ga
  <small id="sugmsg" style="color:var(--mut)"></small><div id="sug" hidden></div>
  <div class="row"><button type="button" class="g" id="pick">📍 Elegir en el mapa</button><span id="ll" style="align-self:center;color:var(--mut)">sin ubicación</span></div>
  <div class="row"><input type="number" id="pos" min="1" placeholder="Posición"><input id="bib" placeholder="Dorsal"></div>
+ <div class="row"><button type="button" class="g" id="res">🔎 Buscar mis resultados</button><button type="button" class="g" id="me" style="flex:0 0 auto" title="Cambiar mi nombre">✎</button></div>
  <textarea id="notes" rows="3" placeholder="Notas, sensaciones, clima..."></textarea>
  <div class="row"><button type="button" class="g" id="cancel">Cancelar</button><button>Guardar</button></div>
 </form></dialog>
@@ -252,6 +253,14 @@ $('f').onsubmit=async e=>{e.preventDefault();
  const r={name:$('name').value,date:$('date').value,dist:+$('dist').value,secs:(+$('h').value||0)*3600+(+$('m').value)*60+(+$('s').value),
   place:$('place').value,pos:+$('pos').value||null,bib:$('bib').value,notes:$('notes').value,...draft};
  try{await store.add(r)}catch(err){return alert(err.message)}$('dlg').close();render();show(r.id)};
+// buscar mis resultados: abre una búsqueda con mi nombre + carrera + año (el nombre se guarda solo en este navegador)
+const myName=()=>{try{return localStorage.getItem('runner')||''}catch{return''}};
+const askName=()=>{const n=(prompt('Tu nombre y apellidos para buscar tus resultados:',myName())||'').trim();if(n)try{localStorage.setItem('runner',n)}catch{}return n};
+$('me').onclick=askName;
+$('res').onclick=()=>{const r=$('name').value.trim();if(!r)return alert('Escribe primero el nombre de la carrera');
+ const n=myName()||askName();if(!n)return;
+ const y=($('date').value||'').slice(0,4)||new Date().getFullYear();
+ window.open('https://www.google.com/search?q='+encodeURIComponent(`"${n}" ${r} ${y} resultados clasificación`),'_blank','noopener')};
 $('exp').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(R,null,1)],{type:'application/json'}));a.download='mis-carreras.json';a.click()};
 $('imp').onclick=()=>$('impf').click();
 $('impf').onchange=async e=>{try{for(const r of JSON.parse(await e.target.files[0].text())){delete r.id;await store.add(r)}render()}catch(err){alert('Archivo no válido')}};
